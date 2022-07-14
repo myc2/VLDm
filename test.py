@@ -6,6 +6,8 @@ import decoder
 import os
 from dataset import BaseDataset
 import draw_points
+import cobb_evaluate
+import scipy.io as sc
 
 def apply_mask(image, mask, alpha=0.5):
     """Apply the given mask to the image.
@@ -36,6 +38,7 @@ class Network(object):
         self.dataset = {'spinal': BaseDataset}
 
     def load_model(self, model, resume):
+        resume = "weights_spinal/model_100.pth"
         checkpoint = torch.load(resume, map_location=lambda storage, loc: storage)
         print('loaded weights from {}, epoch {}'.format(resume, checkpoint['epoch']))
         state_dict_ = checkpoint['state_dict']
@@ -78,7 +81,7 @@ class Network(object):
         for cnt, data_dict in enumerate(data_loader):
             images = data_dict['images'][0]
             img_id = data_dict['img_id'][0]
-            images = images.to('cuda')
+            images = images.to('cpu')
             print('processing {}/{} image ... {}'.format(cnt, len(data_loader), img_id))
             with torch.no_grad():
                 output = self.model(images)
@@ -86,30 +89,42 @@ class Network(object):
                 wh = output['wh']
                 reg = output['reg']
 
-            torch.cuda.synchronize(self.device)
+            # torch.cuda.synchronize(self.device)
             pts2 = self.decoder.ctdet_decode(hm, wh, reg)   # 17, 11
             pts0 = pts2.copy()
             pts0[:,:10] *= args.down_ratio
 
-            print('totol pts num is {}'.format(len(pts2)))
+            print('total pts num is {}'.format(len(pts2)))
 
             ori_image = dsets.load_image(dsets.img_ids.index(img_id))
             ori_image_regress = cv2.resize(ori_image, (args.input_w, args.input_h))
             ori_image_points = ori_image_regress.copy()
 
+            
+
             h,w,c = ori_image.shape
             pts0 = np.asarray(pts0, np.float32)
+           
             # pts0[:,0::2] = pts0[:,0::2]/args.input_w*w
             # pts0[:,1::2] = pts0[:,1::2]/args.input_h*h
             sort_ind = np.argsort(pts0[:,1])
             pts0 = pts0[sort_ind]
+            # print(pts0)
 
             ori_image_regress, ori_image_points = draw_points.draw_landmarks_regress_test(pts0,
                                                                                           ori_image_regress,
                                                                                           ori_image_points)
 
+            path = '/Users/mc/Desktop/local-SURF/yijingru/Vertebra-Landmark-Detection-master/dataPath/labels/test/'
+            # handle exceptions?
+            cobb_pts = sc.loadmat(path + img_id + '.mat')
+            cobb_pts1 = cobb_pts['p2']
+            # cv2.imshow("without angles", img)
+                                                                                        
+            angles = cobb_evaluate.cobb_angle_calc(cobb_pts1, ori_image)
             cv2.imshow('ori_image_regress', ori_image_regress)
             cv2.imshow('ori_image_points', ori_image_points)
+            cv2.imshow('classified', ori_image)
             k = cv2.waitKey(0) & 0xFF
             if k == ord('q'):
                 cv2.destroyAllWindows()

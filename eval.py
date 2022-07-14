@@ -36,6 +36,7 @@ class Network(object):
         self.dataset = {'spinal': BaseDataset}
 
     def load_model(self, model, resume):
+        resume = "weights_spinal/model_100.pth"
         checkpoint = torch.load(resume, map_location=lambda storage, loc: storage)
         print('loaded weights from {}, epoch {}'.format(resume, checkpoint['epoch']))
         state_dict_ = checkpoint['state_dict']
@@ -51,26 +52,28 @@ class Network(object):
 
         dataset_module = self.dataset[args.dataset]
         dsets = dataset_module(data_dir=args.data_dir,
-                               phase='test',
-                               input_h=args.input_h,
-                               input_w=args.input_w,
-                               down_ratio=args.down_ratio)
+                                phase='test',
+                                input_h=args.input_h,
+                                input_w=args.input_w,
+                                down_ratio=args.down_ratio)
 
         data_loader = torch.utils.data.DataLoader(dsets,
-                                                  batch_size=1,
-                                                  shuffle=False,
-                                                  num_workers=1,
-                                                  pin_memory=True)
+                                                    batch_size=1,
+                                                    shuffle=False,
+                                                    num_workers=1,
+                                                    pin_memory=True)
 
         total_time = []
         landmark_dist = []
         pr_cobb_angles = []
         gt_cobb_angles = []
+        print(len(data_loader))
+        # print(enumerate(data_loader))
         for cnt, data_dict in enumerate(data_loader):
             begin_time = time.time()
             images = data_dict['images'][0]
             img_id = data_dict['img_id'][0]
-            images = images.to('cuda')
+            images = images.to('cpu')
             print('processing {}/{} image ...'.format(cnt, len(data_loader)))
 
             with torch.no_grad():
@@ -78,7 +81,7 @@ class Network(object):
                 hm = output['hm']
                 wh = output['wh']
                 reg = output['reg']
-            torch.cuda.synchronize(self.device)
+            # torch.cuda.synchronize(self.device)
             pts2 = self.decoder.ctdet_decode(hm, wh, reg)   # 17, 11
             pts0 = pts2.copy()
             pts0[:,:10] *= args.down_ratio
@@ -108,9 +111,37 @@ class Network(object):
 
             pr_cobb_angles.append(cobb_evaluate.cobb_angle_calc(pr_landmarks, ori_image))
             gt_cobb_angles.append(cobb_evaluate.cobb_angle_calc(gt_landmarks, ori_image))
+            # break INDENTATION HERE
+
+        # print("before np.asarray, pr_cobb_angles ", pr_cobb_angles, "\n")
+        # print("before np.asarray, gt_cobb_angles ", gt_cobb_angles, "\n")
 
         pr_cobb_angles = np.asarray(pr_cobb_angles, np.float32)
         gt_cobb_angles = np.asarray(gt_cobb_angles, np.float32)
+
+        # print("after np.asarray, pr_cobb_angles ", pr_cobb_angles, "\n")
+        # print("after np.asarray, gt_cobb_angles ", gt_cobb_angles, "\n")
+
+        f = open("weights_spinal/cobb_angle_error.csv", "w")
+        g = open("weights_spinal/pr_vs_gt.csv", "w")
+        count = 1
+        for pr_pt, gt_pt in zip(pr_cobb_angles, gt_cobb_angles) : 
+            # print("pr_pt : {}".format(pr_pt) + "\n")
+            # print("gt_pt : {}".format(gt_pt) + "\n")
+            pr_angle = max(pr_pt)
+            gt_angle = max(gt_pt)
+            error = (pr_angle / gt_angle) / gt_angle
+            f.write(str( error * 100) + "\n")
+            # f.write(str(angle1) + "\n" )
+            # f.write(str(angle2) + "\n" )
+            # f.write(str(angle3) + "\n" )
+  
+            g.write("image : {}".format(count) + "\n")
+            g.write(str(pr_pt) + "\n")
+            g.write(str(gt_pt) + "\n")
+            g.write("\n")
+            count += 1
+            # print( "relative error of one cobb angle is {} \n".format([angle1, angle2, angle3]) )
 
         out_abs = abs(gt_cobb_angles - pr_cobb_angles)
         out_add = gt_cobb_angles + pr_cobb_angles
@@ -126,6 +157,8 @@ class Network(object):
         total_time = total_time[1:]
         print('avg time is {}'.format(np.mean(total_time)))
         print('FPS is {}'.format(1./np.mean(total_time)))
+
+        # self.eval_three_angles(args, save)
 
 
     def SMAPE_single_angle(self, gt_cobb_angles, pr_cobb_angles):
@@ -175,7 +208,7 @@ class Network(object):
                 hm = output['hm']
                 wh = output['wh']
                 reg = output['reg']
-            torch.cuda.synchronize(self.device)
+            # torch.cuda.synchronize(self.device)
             pts2 = self.decoder.ctdet_decode(hm, wh, reg)   # 17, 11
             pts0 = pts2.copy()
             pts0[:,:10] *= args.down_ratio
