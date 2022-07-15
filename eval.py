@@ -67,8 +67,10 @@ class Network(object):
         landmark_dist = []
         pr_cobb_angles = []
         gt_cobb_angles = []
-        print(len(data_loader))
+        # print(len(data_loader))
         # print(enumerate(data_loader))
+        gt_perimeter = []
+        squared_error_den = []
         for cnt, data_dict in enumerate(data_loader):
             begin_time = time.time()
             images = data_dict['images'][0]
@@ -106,8 +108,20 @@ class Network(object):
             total_time.append(end_time-begin_time)
 
             gt_landmarks = dsets.load_gt_pts(dsets.load_annoFolder(img_id))
+            gt_mean = np.mean(gt_landmarks)
             for pr_pt, gt_pt in zip(pr_landmarks, gt_landmarks):
                     landmark_dist.append(np.sqrt((pr_pt[0]-gt_pt[0])**2+(pr_pt[1]-gt_pt[1])**2))
+                    squared_error_den.append(np.sqrt((gt_pt[0] - gt_mean) ** 2 + (pr_pt[1] - gt_mean) ** 2))
+            for i in range(0, len(gt_landmarks) - 4, 4):
+                p1 = gt_landmarks[i]
+                p2 = gt_landmarks[i + 1]
+                p3 = gt_landmarks[i + 2]
+                p4 = gt_landmarks[i + 3]
+                d1 = np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+                d2 = np.sqrt((p2[0] - p3[0]) ** 2 + (p2[1] - p3[1]) ** 2)
+                d3 = np.sqrt((p3[0] - p4[0]) ** 2 + (p3[1] - p4[1]) ** 2)
+                d4 = np.sqrt((p4[0] - p1[0]) ** 2 + (p4[1] - p1[1]) ** 2)
+                gt_perimeter.append(d1 + d2 + d3 + d4)
 
             pr_cobb_angles.append(cobb_evaluate.cobb_angle_calc(pr_landmarks, ori_image))
             gt_cobb_angles.append(cobb_evaluate.cobb_angle_calc(gt_landmarks, ori_image))
@@ -142,6 +156,7 @@ class Network(object):
             g.write("\n")
             count += 1
             # print( "relative error of one cobb angle is {} \n".format([angle1, angle2, angle3]) )
+        rse = np.mean(landmark_dist) / np.sum(gt_perimeter)
 
         out_abs = abs(gt_cobb_angles - pr_cobb_angles)
         out_add = gt_cobb_angles + pr_cobb_angles
@@ -151,7 +166,8 @@ class Network(object):
 
         SMAPE = np.mean(term1 / term2 * 100)
 
-        print('mse of landmarkds is {}'.format(np.mean(landmark_dist)))
+        # print('mse of landmarkds is {}'.format(np.mean(landmark_dist)))
+        print("rse of landmarks is {}".format(rse))
         print('SMAPE is {}'.format(SMAPE))
 
         total_time = total_time[1:]
