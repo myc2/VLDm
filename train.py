@@ -20,17 +20,20 @@ def collater(data):
 
 class Network(object):
     def __init__(self, args):
+        # print("entered train.py Network init")
         torch.manual_seed(317)
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         heads = {'hm': args.num_classes,
                  'reg': 2*args.num_classes,
                  'wh': 2*4,}
-
+        # print("self.model.train()??")
+        # getting the model and dataset
         self.model = spinal_net.SpineNet(heads=heads,
                                          pretrained=True,
                                          down_ratio=args.down_ratio,
                                          final_kernel=1,
                                          head_conv=256)
+        
         self.num_classes = args.num_classes
         self.decoder = decoder.DecDecoder(K=args.K, conf_thresh=args.conf_thresh)
         self.dataset = {'spinal': BaseDataset}
@@ -42,6 +45,7 @@ class Network(object):
         else:
             state_dict = model.state_dict()
         data = {'epoch': epoch, 'state_dict': state_dict}
+        # saving the epoch loss and dictionary
         torch.save(data, path)
 
     def load_model(self, model, resume, strict=True):
@@ -60,16 +64,25 @@ class Network(object):
         if not strict:
             for k in state_dict:
                 if k in model_state_dict:
+                    # if the key is in the model_state
                     if state_dict[k].shape != model_state_dict[k].shape:
+                        # if the .shape doesn't match up to the model, we just skipp it
                         print('Skip loading parameter {}, required shape{}, ' \
                               'loaded shape{}.'.format(k, model_state_dict[k].shape, state_dict[k].shape))
+                        # re-assignment
                         state_dict[k] = model_state_dict[k]
                 else:
+                    # we just move on
                     print('Drop parameter {}.'.format(k))
             for k in model_state_dict:
                 if not (k in state_dict):
+                    # if not found in state_dict
                     print('No param {}.'.format(k))
+                    # re-assign
                     state_dict[k] = model_state_dict[k]
+        # what's strict????
+        # load_state_dict(strict=False) allows the following: 
+        # loading a dict with missing parameters. loading a dict with more parameters than needed.
         model.load_state_dict(state_dict, strict=False)
         return model
 
@@ -90,20 +103,22 @@ class Network(object):
         print('Setting up data...')
 
         dataset_module = self.dataset[args.dataset]
-
+        print("dataset_module", dataset_module)
         dsets = {x: dataset_module(data_dir=args.data_dir,
                                    phase=x,
                                    input_h=args.input_h,
                                    input_w=args.input_w,
                                    down_ratio=args.down_ratio)
                  for x in ['train', 'val']}
-
+        # print("possible error calling torch?")
+        # print("drop_last = False")
         dsets_loader = {'train': torch.utils.data.DataLoader(dsets['train'],
                                                              batch_size=args.batch_size,
                                                              shuffle=True,
                                                              num_workers=args.num_workers,
                                                              pin_memory=True,
-                                                             drop_last=True,
+                                                             drop_last=False,
+                                                            #  drop_last = True,
                                                              collate_fn=collater),
 
                         'val':torch.utils.data.DataLoader(dsets['val'],
@@ -120,37 +135,53 @@ class Network(object):
         for epoch in range(1, args.num_epoch+1):
             print('-'*10)
             print('Epoch: {}/{} '.format(epoch, args.num_epoch))
+            # HERE
             epoch_loss = self.run_epoch(phase='train',
                                         data_loader=dsets_loader['train'],
                                         criterion=criterion)
+            print("data_loader = desets_loader['train']", len(dsets_loader['train']))
+            print("passed epoch loss: ", epoch_loss)
             train_loss.append(epoch_loss)
             scheduler.step(epoch)
 
+            print("data_loader = dsets_loader['val']", len(dsets_loader['val']))
             epoch_loss = self.run_epoch(phase='val',
                                         data_loader=dsets_loader['val'],
                                         criterion=criterion)
+            
             val_loss.append(epoch_loss)
 
-            np.savetxt(os.path.join(save_path, 'train_loss.txt'), train_loss, fmt='%.6f')
-            np.savetxt(os.path.join(save_path, 'val_loss.txt'), val_loss, fmt='%.6f')
+            # HIAHDSILFHA;SLDFJA;LSKDJL;ASDJF;LKASDJ;FKAL WHY WRITE TEXT????
+            # np.savetxt(os.path.join(save_path, 'train_loss.txt'), train_loss, fmt='%.6f')
+            # np.savetxt(os.path.join(save_path, 'val_loss.txt'), val_loss, fmt='%.6f')
 
             if epoch % 10 == 0 or epoch ==1:
+                # print("epoch % 10 == 0 or epoch == 1")
                 self.save_model(os.path.join(save_path, 'model_{}.pth'.format(epoch)), epoch, self.model)
 
             if len(val_loss)>1:
+                # print(val_loss > 1)
                 if val_loss[-1]<np.min(val_loss[:-1]):
                     self.save_model(os.path.join(save_path, 'model_last.pth'), epoch, self.model)
 
     def run_epoch(self, phase, data_loader, criterion):
+        print("initial data_loader", len(data_loader))
         if phase == 'train':
+            print("run_epoch first if")
             self.model.train()
         else:
+            print("run epoch else")
             self.model.eval()
         running_loss = 0.
+        # running_loss = 0.
+        print(len(data_loader))
         for data_dict in data_loader:
+            # print("data_loader loop:")
             for name in data_dict:
+                # print(name)
                 data_dict[name] = data_dict[name].to(device=self.device)
             if phase == 'train':
+                # print('phase == train')
                 self.optimizer.zero_grad()
                 with torch.enable_grad():
                     pr_decs = self.model(data_dict['input'])
@@ -158,11 +189,14 @@ class Network(object):
                     loss.backward()
                     self.optimizer.step()
             else:
+                # print('phase != train')
+                # print("dataloader:", len(data_loader))
                 with torch.no_grad():
                     pr_decs = self.model(data_dict['input'])
                     loss = criterion(pr_decs, data_dict)
-
+            
             running_loss += loss.item()
+        print("end of loop")
         epoch_loss = running_loss / len(data_loader)
         print('{} loss: {}'.format(phase, epoch_loss))
         return epoch_loss
